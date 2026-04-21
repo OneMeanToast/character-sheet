@@ -1,0 +1,6 @@
+node_modules/
+.env
+google-token.json
+command-center.db
+uploads/
+config.json
