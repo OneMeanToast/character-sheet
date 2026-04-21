@@ -1,0 +1,13 @@
+{
+  "name": "command-center",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal life command center — local sci-fi HUD dashboard",
+  "scripts": {
+    "start": "concurrently \"cd server && node index.js\" \"cd client && npm run dev\"",
+    "install:all": "cd server && npm install && cd ../client && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
