@@ -112,10 +112,19 @@ function init() {
       lat REAL NOT NULL,
       lng REAL NOT NULL,
       country TEXT,
-      status TEXT DEFAULT 'radar',
+      status TEXT DEFAULT 'planned',
       notes TEXT,
       image_path TEXT,
       target_date TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS country_statuses (
+      country_code TEXT PRIMARY KEY,
+      country_name TEXT,
+      status TEXT NOT NULL,
+      notes TEXT,
+      target_date TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS rss_feeds (
@@ -125,6 +134,13 @@ function init() {
       tag TEXT,
       active INTEGER DEFAULT 1
     );
+  `);
+
+  // Migrate legacy pin status names → visited / planned / wishlist
+  db.exec(`
+    UPDATE travel_pins SET status = 'visited'  WHERE status = 'conquered';
+    UPDATE travel_pins SET status = 'planned'  WHERE status = 'radar';
+    UPDATE travel_pins SET status = 'wishlist' WHERE status = 'dreaming';
   `);
 
   const row = db.prepare('SELECT id FROM character WHERE id = 1').get();
