@@ -1,7 +1,18 @@
 const express = require('express');
+const multer = require('multer');
+const path = require('path');
 const { db } = require('../database');
 
 const router = express.Router();
+
+const storage = multer.diskStorage({
+  destination: path.join(__dirname, '..', 'uploads'),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `asset-${Date.now()}${ext}`);
+  }
+});
+const upload = multer({ storage });
 
 // Assets
 router.get('/assets', (req, res) => {
@@ -36,6 +47,20 @@ router.put('/assets/:id', (req, res) => {
 router.delete('/assets/:id', (req, res) => {
   db.prepare('DELETE FROM assets WHERE id = ?').run(Number(req.params.id));
   res.json({ ok: true });
+});
+
+router.post('/assets/:id/image', upload.single('image'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const id = Number(req.params.id);
+  const relative = `/uploads/${req.file.filename}`;
+  db.prepare('UPDATE assets SET image_path = ? WHERE id = ?').run(relative, id);
+  res.json(db.prepare('SELECT * FROM assets WHERE id = ?').get(id));
+});
+
+router.delete('/assets/:id/image', (req, res) => {
+  const id = Number(req.params.id);
+  db.prepare('UPDATE assets SET image_path = ? WHERE id = ?').run('', id);
+  res.json(db.prepare('SELECT * FROM assets WHERE id = ?').get(id));
 });
 
 // Accounts

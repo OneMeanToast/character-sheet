@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import { api } from '../api.js';
+import { api, ASSETS_BASE } from '../api.js';
 
 const CAT_ICON = {
   property: '⌂ PROPERTY',
@@ -83,11 +83,75 @@ export default function Inventory() {
   );
 }
 
+function AssetImage({ asset, onUpload, onClear, onPreview }) {
+  const ref = useRef();
+  const hasImg = !!asset.image_path;
+  return (
+    <div className="asset-image">
+      {hasImg && (
+        <img
+          src={`${ASSETS_BASE}${asset.image_path}`}
+          alt={asset.name}
+          onClick={() => onPreview(asset)}
+        />
+      )}
+      {!hasImg && (
+        <div className="asset-image-placeholder" onClick={() => ref.current?.click()}>
+          + IMAGE
+        </div>
+      )}
+      <div className="asset-image-actions">
+        <button className="btn ghost sm" onClick={() => ref.current?.click()} title={hasImg ? 'Replace' : 'Upload'}>
+          {hasImg ? '↻' : '+'}
+        </button>
+        {hasImg && <button className="btn ghost sm" onClick={() => onClear(asset)} title="Remove image">×</button>}
+      </div>
+      <input
+        ref={ref}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={e => {
+          const f = e.target.files?.[0];
+          if (f) onUpload(asset, f);
+          e.target.value = '';
+        }}
+      />
+    </div>
+  );
+}
+
 function AssetsTab({ items, adding, closeAdd, reload, setErr }) {
   const [form, setForm] = useState({ name: '', category: 'other', value_estimate: 0, notes: '' });
+  const [pendingImage, setPendingImage] = useState(null);
+  const pendingRef = useRef();
+  const [preview, setPreview] = useState(null);
+
   const submit = async () => {
     if (!form.name) return;
-    try { await api.post('/api/inventory/assets', form); setForm({ name: '', category: 'other', value_estimate: 0, notes: '' }); closeAdd(); reload(); }
+    try {
+      const created = await api.post('/api/inventory/assets', form);
+      if (pendingImage) {
+        const fd = new FormData();
+        fd.append('image', pendingImage);
+        await api.post(`/api/inventory/assets/${created.id}/image`, fd);
+      }
+      setForm({ name: '', category: 'other', value_estimate: 0, notes: '' });
+      setPendingImage(null);
+      closeAdd();
+      reload();
+    } catch (e) { setErr(e.message); }
+  };
+
+  const uploadImage = async (asset, file) => {
+    const fd = new FormData();
+    fd.append('image', file);
+    try { await api.post(`/api/inventory/assets/${asset.id}/image`, fd); reload(); }
+    catch (e) { setErr(e.message); }
+  };
+  const clearImage = async (asset) => {
+    if (!confirm('Remove image?')) return;
+    try { await api.del(`/api/inventory/assets/${asset.id}/image`); reload(); }
     catch (e) { setErr(e.message); }
   };
   const del = async (id) => {
@@ -95,11 +159,12 @@ function AssetsTab({ items, adding, closeAdd, reload, setErr }) {
     await api.del(`/api/inventory/assets/${id}`);
     reload();
   };
+
   return (
     <>
       {adding && (
         <div className="inline-form">
-          <input className="input" placeholder="Name" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+          <input className="input" placeholder="Name (e.g. 2019 Yamaha MT-07)" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
           <div className="row">
             <select className="select" value={form.category} onChange={e => setForm({...form, category: e.target.value})}>
               <option value="property">Property</option>
@@ -110,6 +175,26 @@ function AssetsTab({ items, adding, closeAdd, reload, setErr }) {
             <input className="input mono" type="number" placeholder="Value" value={form.value_estimate} onChange={e => setForm({...form, value_estimate: Number(e.target.value)})} />
           </div>
           <input className="input" placeholder="Notes" value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} />
+          <div className="row">
+            <button className="btn ghost sm" onClick={() => pendingRef.current?.click()}>
+              {pendingImage ? '↻ REPLACE' : '+ IMAGE'}
+            </button>
+            {pendingImage && (
+              <span className="tiny mono muted grow" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                📎 {pendingImage.name}
+              </span>
+            )}
+            {pendingImage && (
+              <button className="btn ghost sm" onClick={() => setPendingImage(null)}>×</button>
+            )}
+          </div>
+          <input
+            ref={pendingRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={e => { setPendingImage(e.target.files?.[0] || null); e.target.value = ''; }}
+          />
           <button className="btn" onClick={submit}>ADD</button>
         </div>
       )}
@@ -117,6 +202,12 @@ function AssetsTab({ items, adding, closeAdd, reload, setErr }) {
         <div className="asset-grid">
           {items.map(a => (
             <div className="asset-card" key={a.id}>
+              <AssetImage
+                asset={a}
+                onUpload={uploadImage}
+                onClear={clearImage}
+                onPreview={setPreview}
+              />
               <div className="cat-icon">{CAT_ICON[a.category] || CAT_ICON.other}</div>
               <div className="asset-name">{a.name}</div>
               <div className="asset-value mono">{money(a.value_estimate)}</div>
@@ -126,6 +217,17 @@ function AssetsTab({ items, adding, closeAdd, reload, setErr }) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {preview && (
+        <div className="image-preview-overlay" onClick={() => setPreview(null)}>
+          <div className="image-preview">
+            <img src={`${ASSETS_BASE}${preview.image_path}`} alt={preview.name} />
+            <div className="image-preview-caption mono">
+              {preview.name} · {money(preview.value_estimate)}
+            </div>
+          </div>
         </div>
       )}
     </>
