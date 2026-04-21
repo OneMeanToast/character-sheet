@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const { readConfig, writeConfig } = require('../config');
 
 const router = express.Router();
 
@@ -24,6 +25,14 @@ function getOAuthClient() {
       client.setCredentials(token);
     } catch {}
   }
+  client.on('tokens', (tokens) => {
+    try {
+      let existing = {};
+      if (fs.existsSync(TOKEN_PATH)) existing = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
+      const merged = { ...existing, ...tokens };
+      fs.writeFileSync(TOKEN_PATH, JSON.stringify(merged, null, 2));
+    } catch {}
+  });
   return { client, google };
 }
 
@@ -59,31 +68,108 @@ router.get('/oauth/callback', async (req, res) => {
   }
 });
 
+// List all calendars the user has access to
+router.get('/calendars', async (req, res) => {
+  const ctx = getOAuthClient();
+  if (!ctx || !fs.existsSync(TOKEN_PATH)) {
+    return res.json({ authenticated: false, calendars: [], selected: [] });
+  }
+  try {
+    const calendar = ctx.google.calendar({ version: 'v3', auth: ctx.client });
+    const response = await calendar.calendarList.list({ maxResults: 250 });
+    const { selected_calendar_ids = [] } = readConfig();
+    const calendars = (response.data.items || []).map(c => ({
+      id: c.id,
+      summary: c.summaryOverride || c.summary,
+      description: c.description || '',
+      primary: !!c.primary,
+      access_role: c.accessRole,
+      background_color: c.backgroundColor || '#3a9bff',
+      foreground_color: c.foregroundColor || '#ffffff',
+      selected: selected_calendar_ids.includes(c.id)
+    }));
+    calendars.sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0) || a.summary.localeCompare(b.summary));
+    res.json({ authenticated: true, calendars, selected: selected_calendar_ids });
+  } catch (err) {
+    res.status(500).json({ authenticated: true, calendars: [], selected: [], error: err.message });
+  }
+});
+
+// Persist which calendars to include
+router.put('/calendars/selection', (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(x => typeof x === 'string') : [];
+  const next = writeConfig({ selected_calendar_ids: ids });
+  res.json({ selected_calendar_ids: next.selected_calendar_ids });
+});
+
+// Aggregate events from all selected calendars (falls back to primary)
 router.get('/events', async (req, res) => {
   const ctx = getOAuthClient();
   if (!ctx) return res.json({ authenticated: false, events: [] });
   if (!fs.existsSync(TOKEN_PATH)) return res.json({ authenticated: false, events: [] });
+
   try {
     const calendar = ctx.google.calendar({ version: 'v3', auth: ctx.client });
+    const { selected_calendar_ids = [] } = readConfig();
     const now = new Date();
     const later = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    const response = await calendar.events.list({
-      calendarId: 'primary',
-      timeMin: now.toISOString(),
-      timeMax: later.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime',
-      maxResults: 25
-    });
-    const events = (response.data.items || []).map(e => ({
-      id: e.id,
-      title: e.summary || '(untitled)',
-      start: e.start?.dateTime || e.start?.date,
-      end: e.end?.dateTime || e.end?.date,
-      location: e.location || '',
-      all_day: !e.start?.dateTime
+
+    // Build the id+name+color map once so events can carry source metadata
+    let calendarMeta = {};
+    if (selected_calendar_ids.length > 0) {
+      try {
+        const listResp = await calendar.calendarList.list({ maxResults: 250 });
+        for (const c of (listResp.data.items || [])) {
+          calendarMeta[c.id] = {
+            name: c.summaryOverride || c.summary,
+            color: c.backgroundColor || '#3a9bff'
+          };
+        }
+      } catch {}
+    }
+
+    const idsToQuery = selected_calendar_ids.length > 0 ? selected_calendar_ids : ['primary'];
+
+    const results = await Promise.all(idsToQuery.map(async calId => {
+      try {
+        const response = await calendar.events.list({
+          calendarId: calId,
+          timeMin: now.toISOString(),
+          timeMax: later.toISOString(),
+          singleEvents: true,
+          orderBy: 'startTime',
+          maxResults: 50
+        });
+        const meta = calendarMeta[calId] || { name: calId === 'primary' ? 'Primary' : calId, color: '#3a9bff' };
+        return (response.data.items || []).map(e => ({
+          id: `${calId}:${e.id}`,
+          title: e.summary || '(untitled)',
+          start: e.start?.dateTime || e.start?.date,
+          end: e.end?.dateTime || e.end?.date,
+          location: e.location || '',
+          all_day: !e.start?.dateTime,
+          calendar_id: calId,
+          calendar_name: meta.name,
+          calendar_color: meta.color
+        }));
+      } catch (err) {
+        return [{
+          id: `${calId}:error`,
+          title: `[${calId}] ${err.message}`,
+          start: now.toISOString(),
+          end: now.toISOString(),
+          location: '',
+          all_day: false,
+          calendar_id: calId,
+          calendar_name: calId,
+          calendar_color: '#ff4d6d',
+          error: true
+        }];
+      }
     }));
-    res.json({ authenticated: true, events });
+
+    const events = results.flat().sort((a, b) => new Date(a.start) - new Date(b.start));
+    res.json({ authenticated: true, events, calendar_count: idsToQuery.length });
   } catch (err) {
     res.status(500).json({ authenticated: true, events: [], error: err.message });
   }

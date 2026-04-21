@@ -5,7 +5,8 @@ const configPath = path.join(__dirname, 'config.json');
 
 const defaults = {
   obsidian_vault_path: '',
-  rss_feeds: []
+  rss_feeds: [],
+  selected_calendar_ids: []
 };
 
 function readConfig() {

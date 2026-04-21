@@ -626,6 +626,15 @@ button, input, textarea, select {
 .today-banner .day { font-size: 18px; color: var(--accent-blue); font-weight: 700; }
 .today-banner .date-sub { font-size: 10px; color: var(--text-dim); letter-spacing: 0.08em; }
 
+.cal-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 4px currentColor;
+}
+
 .event-row, .article-row {
   border-bottom: 1px solid var(--border-dim);
   padding: 6px 0;

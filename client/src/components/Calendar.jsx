@@ -11,6 +11,8 @@ export default function Calendar() {
   const [calStatus, setCalStatus] = useState({ configured: false, authenticated: false });
   const [events, setEvents] = useState([]);
   const [calErr, setCalErr] = useState(null);
+  const [calendars, setCalendars] = useState([]);
+  const [calSettings, setCalSettings] = useState(false);
 
   const [articles, setArticles] = useState([]);
   const [feeds, setFeeds] = useState([]);
@@ -31,8 +33,25 @@ export default function Calendar() {
       if (s.authenticated) {
         const r = await api.get('/api/calendar/events');
         setEvents(r.events || []);
-        if (r.error) setCalErr(r.error);
+        if (r.error) setCalErr(r.error); else setCalErr(null);
       }
+    } catch (e) { setCalErr(e.message); }
+  };
+
+  const loadCalendars = async () => {
+    try {
+      const r = await api.get('/api/calendar/calendars');
+      setCalendars(r.calendars || []);
+    } catch (e) { setCalErr(e.message); }
+  };
+
+  const toggleCalendar = async (id) => {
+    const current = calendars.filter(c => c.selected).map(c => c.id);
+    const next = current.includes(id) ? current.filter(x => x !== id) : [...current, id];
+    setCalendars(cs => cs.map(c => ({ ...c, selected: next.includes(c.id) })));
+    try {
+      await api.put('/api/calendar/calendars/selection', { ids: next });
+      loadCalendar();
     } catch (e) { setCalErr(e.message); }
   };
 
@@ -50,6 +69,9 @@ export default function Calendar() {
   };
 
   useEffect(() => { loadCalendar(); loadFeeds(); loadArticles(); }, []);
+  useEffect(() => {
+    if (calSettings && calStatus.authenticated) loadCalendars();
+  }, [calSettings, calStatus.authenticated]);
   useEffect(() => { loadArticles(); }, [tagFilter]);
 
   const connect = async () => {
@@ -83,7 +105,12 @@ export default function Calendar() {
         <div className="calendar-subsection">
           <div className="sub-header">
             <span>▸ CALENDAR</span>
-            {calStatus.authenticated && <button className="btn ghost sm" onClick={loadCalendar}>⟳</button>}
+            {calStatus.authenticated && (
+              <div className="row" style={{ gap: 4 }}>
+                <button className="btn ghost sm" onClick={loadCalendar} title="Refresh">⟳</button>
+                <button className="btn ghost sm" onClick={() => setCalSettings(s => !s)} title="Pick calendars">⚙</button>
+              </div>
+            )}
           </div>
 
           <div className="today-banner">
@@ -102,12 +129,44 @@ export default function Calendar() {
           {calStatus.configured && !calStatus.authenticated && (
             <button className="btn" onClick={connect}>▸ CONNECT GOOGLE CALENDAR</button>
           )}
-          {calStatus.authenticated && events.length === 0 && (
+
+          {calStatus.authenticated && calSettings && (
+            <div className="inline-form">
+              <div className="tiny mono muted">SELECT CALENDARS TO SYNC</div>
+              {calendars.length === 0
+                ? <div className="empty">LOADING…</div>
+                : calendars.map(c => (
+                    <label key={c.id} className="row" style={{ cursor: 'pointer', padding: '3px 0', gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={!!c.selected}
+                        onChange={() => toggleCalendar(c.id)}
+                        style={{ accentColor: c.background_color }}
+                      />
+                      <span className="cal-dot" style={{ background: c.background_color }} />
+                      <span className="grow" style={{ fontSize: 12 }}>
+                        {c.summary}
+                        {c.primary && <span className="tiny mono muted" style={{ marginLeft: 6 }}>PRIMARY</span>}
+                      </span>
+                    </label>
+                  ))
+              }
+              <div className="tiny muted" style={{ marginTop: 4 }}>
+                None selected = primary only.
+              </div>
+            </div>
+          )}
+
+          {calStatus.authenticated && events.length === 0 && !calSettings && (
             <div className="empty">NO EVENTS IN NEXT 7 DAYS</div>
           )}
           {events.map(e => (
             <div key={e.id} className="event-row">
-              <div className="time">{formatEventTime(e.start, e.all_day)}</div>
+              <div className="time row" style={{ gap: 6, alignItems: 'center' }}>
+                {e.calendar_color && <span className="cal-dot" style={{ background: e.calendar_color }} />}
+                <span>{formatEventTime(e.start, e.all_day)}</span>
+                {e.calendar_name && <span className="tiny muted" style={{ marginLeft: 'auto' }}>{e.calendar_name}</span>}
+              </div>
               <div>{e.title}</div>
               {e.location && <div className="tiny muted">◉ {e.location}</div>}
             </div>
